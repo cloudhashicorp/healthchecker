@@ -1,0 +1,185 @@
+$ServerListFilePath = "C:\Test\ServerList.txt"
+$ServerList = Get-Content $ServerListFilePath -ErrorAction SilentlyContinue
+$ReportFilePath = "C:\Test\Report.htm" 
+$Result = @()
+ 
+ForEach($ComputerName in $ServerList) 
+{
+$AVGProc = Get-WmiObject -computername $ComputerName win32_processor | 
+Measure-Object -property LoadPercentage -Average | Select Average
+$OS = gwmi -Class win32_operatingsystem -computername $ComputerName |
+Select-Object @{Name = "MemoryUsage"; Expression = {“{0:N2}” -f ((($_.TotalVisibleMemorySize - $_.FreePhysicalMemory)*100)/ $_.TotalVisibleMemorySize) }}
+$vol = Get-WmiObject -Class win32_Volume -ComputerName $ComputerName -Filter "DriveLetter = 'C:'" |
+Select-object @{Name = "C PercentUsed"; Expression = {“{0:N2}” -f  ((($_.Capacity - $_.FreeSpace ) / $_.Capacity)*100) } }
+$eventlogservice = Get-Service "EventLog" -ComputerName $ComputerName | Select-Object Status
+$SCCMAgent = Get-Service "CcmExec" -ComputerName $ComputerName | Select-Object Status
+$CrowdStrike = Get-Service "CSFalconService" -ComputerName $ComputerName | Select-Object Status
+$WinDefender = Get-Service "WinDefend" -ComputerName $ComputerName | Select-Object Status
+$Splunk = Get-Service "SplunkForwarder" -ComputerName $ComputerName | Select-Object Status
+$TestNetConnection = Test-NetConnection -ComputerName $ComputerName  | Select-Object PingSucceeded
+  
+$Result += [PSCustomObject] @{ 
+        ServerName = "$ComputerName"
+        CPULoad = $AVGProc.Average
+        MemLoad = $OS.MemoryUsage
+        CDrive = $vol.'C PercentUsed'
+        EvtLogServ = $eventlogservice.Status
+        SCCMAgentStatus = $SCCMAgent.Status
+        CrowdStrikeAV = $CrowdStrike.Status
+        WinDefenderAV = $WinDefender.Status
+        SplunkAgent = $Splunk.Status
+        TestNetConnectionC = $TestNetConnection.PingSucceeded
+    }
+
+    $OutputReport = "<HTML><TITLE>Server Health Report</TITLE>
+                     <BODY>
+                     <font color =""99000"">
+                     <H2>Server Health Report</H2></font>
+                     <Table border=3 cellpadding=5 cellspacing=5>
+                     <TR bgcolor=D1D0CE align=center>
+                       <TD><B>Server</B></TD>
+                       <TD><B>Avg.CPU Usage</B></TD>
+                       <TD><B>Memory Usage</B></TD>
+                       <TD><B>C: Drive Usage</B></TD>
+                       <TD><B>Event Log Service</B></TD>
+                       <TD><B>SCCM Agent</B></TD>
+                       <TD><B>CrowdStrike AV</B></TD>
+                       <TD><B>Windows Defender AV</B></TD>
+                       <TD><B>Splunk Agent</B></TD>
+                       <TD><B>Ping Status</B></TD></TR>"
+                        
+    Foreach($Entry in $Result) 
+    { 
+          #convert raw data to percentages
+          $CPUAsPercent             = "$($Entry.CPULoad)%"
+          $MemAsPercent             = "$($Entry.MemLoad)%"
+          $CDriveAsPercent          = "$($Entry.CDrive)%"
+          #status of running service
+          $EvtLogServ               = "$($Entry.EvtLogServ)"
+          $SCCMAgentSt              = "$($Entry.SCCMAgentStatus)"
+          $CrowdStrikeAVSt          = "$($Entry.CrowdStrikeAV)"
+          $WinDefenderAVSt          = "$($Entry.WinDefenderAV)"
+          $SplunkSt                 = "$($Entry.SplunkAgent)"
+          $TestNetConnectionSt      = "$($Entry.TestNetConnectionC)"
+
+          $OutputReport += "<TR><TD>$($Entry.Servername)</TD>"
+
+          # check CPU load
+          if(($Entry.CPULoad) -ge 80) 
+          {
+              $OutputReport += "<TD bgcolor=E41B17 align=center>$($CPUAsPercent)</TD>"
+          } 
+          elseif((($Entry.CPULoad) -ge 70) -and (($Entry.CPULoad) -lt 80))
+          {
+              $OutputReport += "<TD bgcolor=yellow align=center>$($CPUAsPercent)</TD>"
+          }
+          else
+          {
+              $OutputReport += "<TD bgcolor=lightgreen align=center>$($CPUAsPercent)</TD>" 
+          }
+
+          # check RAM load
+          if(($Entry.MemLoad) -ge 80)
+          {
+              $OutputReport += "<TD bgcolor=E41B17 align=center>$($MemAsPercent)</TD>"
+          }
+          elseif((($Entry.MemLoad) -ge 70) -and (($Entry.MemLoad) -lt 80))
+          {
+              $OutputReport += "<TD bgcolor=yellow align=center>$($MemAsPercent)</TD>"
+          }
+          else
+          {
+              $OutputReport += "<TD bgcolor=lightgreen align=center>$($MemAsPercent)</TD>"
+          }
+
+          # check C: Drive Usage
+          if(($Entry.CDrive) -ge 80)
+          {
+              $OutputReport += "<TD bgcolor=E41B17 align=center>$($CDriveAsPercent)</TD>"
+          }
+          elseif((($Entry.CDrive) -ge 70) -and (($Entry.CDrive) -lt 80))
+          {
+              $OutputReport += "<TD bgcolor=yellow align=center>$($CDriveAsPercent)</TD>"
+          }
+          else
+          {
+              $OutputReport += "<TD bgcolor=lightgreen align=center>$($CDriveAsPercent)</TD>"
+          }
+
+          # check Event Log Status
+          if(($Entry.EvtLogServ) -eq "Stopped" )
+          {
+              $OutputReport += "<TD bgcolor=E41B17 align=center>$($EvtLogServ)</TD>"
+          }
+
+          elseif((($Entry.EvtLogServ) -eq "Running") )
+          {
+             $OutputReport += "<TD bgcolor=lightgreen align=center>$($EvtLogServ)</TD>"
+          }
+
+           # check SCCM Agent Status
+           if(($Entry.SCCMAgentStatus) -eq "Stopped" )
+           {
+               $OutputReport += "<TD bgcolor=E41B17 align=center>$($SCCMAgentSt)</TD>"
+           }
+ 
+           elseif((($Entry.SCCMAgentStatus) -eq "Running") )
+           {
+              $OutputReport += "<TD bgcolor=lightgreen align=center>$($SCCMAgentSt)</TD>"
+           }
+
+            # check Crowd Strike Status
+            if(($Entry.CrowdStrikeAV) -eq "Stopped" )
+            {
+                $OutputReport += "<TD bgcolor=E41B17 align=center>$($CrowdStrikeAVSt)</TD>"
+            }
+  
+            elseif((($Entry.CrowdStrikeAV) -eq "Running") )
+            {
+               $OutputReport += "<TD bgcolor=lightgreen align=center>$($CrowdStrikeAVSt)</TD>"
+            }
+
+            # check Windows Defender AV Status
+            if(($Entry.WinDefenderAV) -eq "Stopped" )
+            {
+                $OutputReport += "<TD bgcolor=E41B17 align=center>$($WinDefenderAVSt)</TD>"
+            }
+    
+            elseif((($Entry.WinDefenderAV) -eq "Running") )
+            {
+                $OutputReport += "<TD bgcolor=lightgreen align=center>$($WinDefenderAVSt)</TD>"
+            }
+
+             # check Splunk Agent Status
+             if(($Entry.SplunkAgent) -eq "Stopped" )
+             {
+                 $OutputReport += "<TD bgcolor=E41B17 align=center>$($SplunkSt)</TD>"
+             }
+     
+             elseif((($Entry.SplunkAgent) -eq "Running") )
+             {
+                 $OutputReport += "<TD bgcolor=lightgreen align=center>$($SplunkSt)</TD>"
+             }
+            
+            # check Ping Status
+            if(($Entry.TestNetConnectionC) -eq "False" )
+            {
+                 $OutputReport += "<TD bgcolor=E41B17 align=center>$($TestNetConnectionSt)</TD>"
+            }
+ 
+            elseif((($Entry.TestNetConnectionC) -eq "True") )
+            {
+                 $OutputReport += "<TD bgcolor=lightgreen align=center>$($TestNetConnectionSt)</TD>"
+            }
+        
+         
+          
+
+          $OutputReport += "</TR>"
+    }
+
+    $OutputReport += "</Table></BODY></HTML>" 
+} 
+ 
+$OutputReport | out-file $ReportFilePath
+Invoke-Expression $ReportFilePath
